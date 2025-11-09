@@ -1,0 +1,160 @@
+{
+  "info": {
+    "name": "Artha Actions E2E",
+    "description": "Tiny, runnable Postman collection to exercise the Actions server end-to-end: initiate → fund → deliver → release/refund → status.\n\nSetup\n1) Set the collection variables (baseUrl, apiKey, buyer, seller, etc.).\n2) Start your local actions-server.\n3) Run requests top-to-bottom. The \"Initiate\" request will store `dealId` automatically for later steps.\n\nNotes\n- Keep amounts tiny on devnet.\n- Servers may return a Blink URL or a serialized transaction you can sign in a wallet.\n- If your server doesn't require auth, leave apiKey empty.",
+    "_postman_id": "7a2aabf4-0d9a-4f3c-8d56-artha-actions-e2e",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "bearer",
+    "bearer": [
+      {
+        "key": "token",
+        "value": "{{apiKey}}",
+        "type": "string"
+      }
+    ]
+  },
+  "variable": [
+    { "key": "baseUrl", "value": "http://localhost:8787", "type": "string" },
+    { "key": "apiKey", "value": "", "type": "string" },
+    { "key": "buyer", "value": "BuyerWalletPublicKeyHere", "type": "string" },
+    { "key": "seller", "value": "SellerWalletPublicKeyHere", "type": "string" },
+    { "key": "mint", "value": "USDC", "type": "string" },
+    { "key": "amount", "value": "1.00", "type": "string" },
+    { "key": "deliveryBy", "value": "2025-11-30T23:59:59Z", "type": "string" },
+    { "key": "disputeHours", "value": "48", "type": "string" },
+    { "key": "dealId", "value": "D-REPLACE-ME", "type": "string" }
+  ],
+  "item": [
+    {
+      "name": "1) Health",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": { "raw": "{{baseUrl}}/health", "host": ["{{baseUrl}}"], "path": ["health"] },
+        "description": "Simple liveness probe for the Actions server."
+      }
+    },
+    {
+      "name": "2) Initiate deal",
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"title\": \"Test escrow: used gadget\",\n  \"buyer\": \"{{buyer}}\",\n  \"seller\": \"{{seller}}\",\n  \"amount\": {{amount}},\n  \"mint\": \"{{mint}}\",\n  \"deliveryBy\": \"{{deliveryBy}}\",\n  \"disputeWindowHours\": {{disputeHours}}\n}"
+        },
+        "url": { "raw": "{{baseUrl}}/actions/deals/initiate", "host": ["{{baseUrl}}"], "path": ["actions", "deals", "initiate"] },
+        "description": "Creates a new deal intent. The test script stores `dealId` for later steps. Response may also include a Blink URL or a serialized funding transaction."
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"status is 200\", function () { pm.response.to.have.status(200); });",
+              "const json = pm.response.json();",
+              "pm.expect(json).to.have.property('dealId');",
+              "pm.collectionVariables.set('dealId', json.dealId);",
+              "if (json.blinkUrl) pm.collectionVariables.set('blinkUrl', json.blinkUrl);",
+              "if (json.tx) pm.collectionVariables.set('fundTx', JSON.stringify(json.tx));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "3) Fund deal",
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"dealId\": \"{{dealId}}\",\n  \"payer\": \"{{buyer}}\"\n}"
+        },
+        "url": { "raw": "{{baseUrl}}/actions/deals/fund", "host": ["{{baseUrl}}"], "path": ["actions", "deals", "fund"] },
+        "description": "Builds a ready-to-sign funding transaction for the buyer. If your UI already used a Blink from the initiate step, you can skip this request."
+      }
+    },
+    {
+      "name": "4) Mark delivered",
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"dealId\": \"{{dealId}}\",\n  \"evidenceCid\": \"bafyREPLACE\",\n  \"note\": \"Shipped via devnet courier\"\n}"
+        },
+        "url": { "raw": "{{baseUrl}}/actions/deals/deliver", "host": ["{{baseUrl}}"], "path": ["actions", "deals", "deliver"] },
+        "description": "Seller signals delivery and optionally attaches an evidence CID already stored on IPFS/Arweave."
+      }
+    },
+    {
+      "name": "5A) Release",
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"dealId\": \"{{dealId}}\",\n  \"approver\": \"{{buyer}}\"\n}"
+        },
+        "url": { "raw": "{{baseUrl}}/actions/deals/release", "host": ["{{baseUrl}}"], "path": ["actions", "deals", "release"] },
+        "description": "Buyer approves releasing funds to the seller."
+      }
+    },
+    {
+      "name": "5B) Refund",
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"dealId\": \"{{dealId}}\",\n  \"approver\": \"{{seller}}\"\n}"
+        },
+        "url": { "raw": "{{baseUrl}}/actions/deals/refund", "host": ["{{baseUrl}}"], "path": ["actions", "deals", "refund"] },
+        "description": "Alternate path: refund buyer."
+      }
+    },
+    {
+      "name": "6) Get deal status",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/actions/deals/{{dealId}}",
+          "host": ["{{baseUrl}}"],
+          "path": ["actions", "deals", "{{dealId}}"]
+        },
+        "description": "Fetch current state of the deal."
+      }
+    },
+    {
+      "name": "7) Open dispute (optional)",
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"dealId\": \"{{dealId}}\",\n  \"reason\": \"Item arrived damaged\",\n  \"evidenceCid\": \"bafyREPLACE-DISPUTE\"\n}"
+        },
+        "url": { "raw": "{{baseUrl}}/actions/deals/dispute", "host": ["{{baseUrl}}"], "path": ["actions", "deals", "dispute"] },
+        "description": "Creates a dispute with an optional evidence CID."
+      }
+    },
+    {
+      "name": "8) Resolve via ticket (arbiter/jobs-service)",
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"dealId\": \"{{dealId}}\",\n  \"ticket\": {\n    \"schema\": \"escrow.v1.ResolveTicket\",\n    \"deal_id\": \"{{dealId}}\",\n    \"action\": \"RELEASE\",\n    \"split_bps\": 0,\n    \"rationale_cid\": \"bafyREPLACE-RATIONALE\",\n    \"confidence\": 0.9,\n    \"nonce\": 1,\n    \"expires_at\": 2000000000,\n    \"signature\": \"hex-encoded-sig\",\n    \"public_key\": \"hex-encoded-pk\"\n  }\n}"
+        },
+        "url": { "raw": "{{baseUrl}}/actions/deals/resolve", "host": ["{{baseUrl}}"], "path": ["actions", "deals", "resolve"] },
+        "description": "Optional endpoint if your server accepts a signed ResolveTicket from an arbiter or jobs-service."
+      }
+    }
+  ]
+}
