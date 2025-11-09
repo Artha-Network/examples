@@ -1,0 +1,156 @@
+# VS Code REST Client examples for Artha Actions
+# Use the "REST Client" extension. Click "Send Request" on each block.
+# Replace placeholder values in the variables section before running.
+#
+# Workflow covered:
+# 1) Health check
+# 2) Initiate deal (create on-chain intent)
+# 3) Fund deal (payer signs and sends tx)
+# 4) Mark delivered (seller submits evidence)
+# 5) Release funds (buyer approves)  OR  Refund (fallback)
+#
+# Notes
+# - The Actions server returns a ready-to-sign transaction payload.
+# - You sign and submit with your wallet or a test helper.
+# - Keep amounts tiny on devnet.
+
+########################################
+# Variables (edit these)
+########################################
+@baseUrl = http://localhost:8787
+@apiKey =                         # optional: if your server requires it
+@buyer =  BuyerWalletPublicKeyHere
+@seller = SellerWalletPublicKeyHere
+@mint  =  USDC                     # logical currency; your server decides mapping
+@amount = 1.00                     # human amount; server converts to base units
+@deliveryBy = 2025-11-30T23:59:59Z # ISO 8601
+@disputeHours = 48
+@dealId = D-REPLACE-ME             # will be returned by initiate; paste it below
+
+########################################
+### 1) Health check
+GET {{baseUrl}}/health
+Authorization: Bearer {{apiKey}}
+
+########################################
+### 2) Initiate a deal
+# Creates an escrow intent. Server should return:
+#   - dealId (string)
+#   - tx or blinkUrl for funding (optional convenience)
+POST {{baseUrl}}/actions/deals/initiate
+Content-Type: application/json
+Authorization: Bearer {{apiKey}}
+
+{
+  "title": "Test escrow: used gadget",
+  "buyer": "{{buyer}}",
+  "seller": "{{seller}}",
+  "amount": {{amount}},
+  "mint": "{{mint}}",
+  "deliveryBy": "{{deliveryBy}}",
+  "disputeWindowHours": {{disputeHours}}
+}
+
+# After sending:
+# - Copy the returned dealId into @dealId above.
+# - If the response includes a blinkUrl or a serialized transaction,
+#   open it with your wallet to fund in the next step.
+
+########################################
+### 3) Fund the deal
+# If your UI used a Blink from the previous step, you can skip this and
+# jump straight to step 6 to fetch the status.
+# Otherwise, ask the server to build a funding tx for the payer.
+POST {{baseUrl}}/actions/deals/fund
+Content-Type: application/json
+Authorization: Bearer {{apiKey}}
+
+{
+  "dealId": "{{dealId}}",
+  "payer": "{{buyer}}"
+}
+
+# Response is a ready-to-sign transaction or a blinkUrl.
+# Sign and submit with your wallet, then keep the signature for logs.
+
+########################################
+### 4) Mark delivered (seller provides evidence)
+# Attach a CID if you already uploaded artifacts to IPFS or Arweave.
+POST {{baseUrl}}/actions/deals/deliver
+Content-Type: application/json
+Authorization: Bearer {{apiKey}}
+
+{
+  "dealId": "{{dealId}}",
+  "evidenceCid": "bafyREPLACE",
+  "note": "Shipped via devnet courier"
+}
+
+########################################
+### 5A) Release funds to seller (buyer approves)
+POST {{baseUrl}}/actions/deals/release
+Content-Type: application/json
+Authorization: Bearer {{apiKey}}
+
+{
+  "dealId": "{{dealId}}",
+  "approver": "{{buyer}}"
+}
+
+########################################
+### 5B) Refund to buyer (alternate path)
+# Use this only if delivery failed or a dispute resolved in buyer's favor.
+POST {{baseUrl}}/actions/deals/refund
+Content-Type: application/json
+Authorization: Bearer {{apiKey}}
+
+{
+  "dealId": "{{dealId}}",
+  "approver": "{{seller}}"
+}
+
+########################################
+### 6) Fetch deal status
+GET {{baseUrl}}/actions/deals/{{dealId}}
+Authorization: Bearer {{apiKey}}
+
+########################################
+### 7) Open a dispute (optional)
+POST {{baseUrl}}/actions/deals/dispute
+Content-Type: application/json
+Authorization: Bearer {{apiKey}}
+
+{
+  "dealId": "{{dealId}}",
+  "reason": "Item arrived damaged",
+  "evidenceCid": "bafyREPLACE-DISPUTE"
+}
+
+########################################
+### 8) Resolve via ticket (arbiter or jobs-service suggestion)
+# This endpoint is optional depending on your server design.
+# Provide a signed ResolveTicket if your flow uses AI or human arbitration.
+POST {{baseUrl}}/actions/deals/resolve
+Content-Type: application/json
+Authorization: Bearer {{apiKey}}
+
+{
+  "dealId": "{{dealId}}",
+  "ticket": {
+    "schema": "escrow.v1.ResolveTicket",
+    "deal_id": "{{dealId}}",
+    "action": "RELEASE",
+    "split_bps": 0,
+    "rationale_cid": "bafyREPLACE-RATIONALE",
+    "confidence": 0.9,
+    "nonce": 1,
+    "expires_at": 2000000000,
+    "signature": "hex-encoded-sig",
+    "public_key": "hex-encoded-pk"
+  }
+}
+
+########################################
+### 9) List recent deals (debug helper, if implemented)
+GET {{baseUrl}}/actions/deals?limit=10
+Authorization: Bearer {{apiKey}}
