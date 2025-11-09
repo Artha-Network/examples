@@ -1,0 +1,125 @@
+/**
+ * Initiate a deal and open the Blink URL in your default browser (Node 18+, ESM).
+ *
+ * What this script does
+ * 1) Calls POST /actions/deals/initiate on your actions-server
+ * 2) Saves the returned dealId to .dealid (for other scripts/Makefile)
+ * 3) If the server returns a `blinkUrl`, it opens it in your default browser
+ *    so you can fund the deal with a wallet. If no Blink is returned, it prints
+ *    any serialized transaction the server provided instead.
+ *
+ * Requirements
+ * - Node 18+ (uses global fetch)
+ * - actions-server running and reachable
+ *
+ * Environment variables (override as needed)
+ *   BASE_URL              default http://localhost:8787
+ *   API_KEY               optional Bearer token
+ *   BUYER                 buyer wallet public key (string)
+ *   SELLER                seller wallet public key (string)
+ *   MINT                  logical asset symbol (default USDC)
+ *   AMOUNT                human amount (default 1.00)
+ *   DELIVERY_BY           ISO 8601 datetime (default 2025-11-30T23:59:59Z)
+ *   DISPUTE_HOURS         default 48
+ *   TITLE                 default "Blink funding demo"
+ *
+ * Usage
+ *   node example/scripts/initiate_and_open_blink.mjs
+ *
+ * Notes
+ * - Cross-platform browser open:
+ *     macOS:    open <url>
+ *     Windows:  start <url>
+ *     Linux:    xdg-open <url>
+ * - If your server doesn’t return a Blink URL, the script prints a compact
+ *   summary of the response so you can fund via a different flow.
+ */
+
+import { writeFile } from "node:fs/promises";
+import { spawn } from "node:child_process";
+
+/* ---------------------------------------
+ * Helpers
+ * ------------------------------------- */
+
+function env(name, fallback) {
+  const v = process.env[name];
+  return v == null || v === "" ? fallback : v;
+}
+
+function headers() {
+  const h = { "content-type": "application/json" };
+  if (API_KEY) h.authorization = `Bearer ${API_KEY}`;
+  return h;
+}
+
+function url(path) {
+  return `${BASE_URL.replace(/\/+$/, "")}/${path.replace(/^\/+/, "")}`;
+}
+
+async function post(path, body) {
+  const res = await fetch(url(path), {
+    method: "POST",
+    headers: headers(),
+    body: JSON.stringify(body)
+  });
+  const text = await res.text();
+  if (!res.ok) {
+    throw new Error(`HTTP ${res.status} ${res.statusText}: ${text.slice(0, 600)}`);
+  }
+  try {
+    return JSON.parse(text);
+  } catch {
+    return { raw: text };
+  }
+}
+
+/** Try to launch the system browser for a URL. Returns true on success. */
+function openInBrowser(href) {
+  try {
+    const platform = process.platform;
+    if (platform === "darwin") {
+      spawn("open", [href], { detached: true, stdio: "ignore" }).unref();
+      return true;
+    }
+    if (platform === "win32") {
+      spawn("cmd", ["/c", "start", "", href], { detached: true, stdio: "ignore" }).unref();
+      return true;
+    }
+    // linux and friends
+    spawn("xdg-open", [href], { detached: true, stdio: "ignore" }).unref();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/* ---------------------------------------
+ * Config
+ * ------------------------------------- */
+
+const BASE_URL = env("BASE_URL", "http://localhost:8787");
+const API_KEY = env("API_KEY", "");
+
+const BUYER = env("BUYER", "BuyerWalletPublicKeyHere");
+const SELLER = env("SELLER", "SellerWalletPublicKeyHere");
+const MINT = env("MINT", "USDC");
+const AMOUNT = Number(env("AMOUNT", "1.00"));
+const DELIVERY_BY = env("DELIVERY_BY", "2025-11-30T23:59:59Z");
+const DISPUTE_HOURS = Number(env("DISPUTE_HOURS", "48"));
+const TITLE = env("TITLE", "Blink funding demo");
+
+// where we stash the deal id for other tools
+const DEAL_FILE = new URL("../.dealid", import.meta.url);
+
+/* ---------------------------------------
+ * Main
+ * ------------------------------------- */
+
+(async () => {
+  const body = {
+    title: TITLE,
+    buyer: BUYER,
+    seller: SELLER,
+    amount: AMOUNT,
+    mint:
